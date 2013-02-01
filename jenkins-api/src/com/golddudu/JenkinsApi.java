@@ -1,6 +1,5 @@
 package com.golddudu;
 
-
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
@@ -19,6 +18,7 @@ import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.AuthState;
 import org.apache.http.auth.Credentials;
 import org.apache.http.auth.UsernamePasswordCredentials;
+import org.apache.http.client.ClientProtocolException;
 import org.apache.http.client.CredentialsProvider;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.protocol.ClientContext;
@@ -182,7 +182,7 @@ public class JenkinsApi {
 	 * @param params
 	 * @throws JSONException
 	 */
-	public void buildWithParam(String jobName, Map<String, String> params) throws JSONException {
+	public void buildWithParam(String jobName, Map<String, String> params) {
 
 		String query = "";
 		for (Entry<String, String> param : params.entrySet()) {
@@ -229,9 +229,8 @@ public class JenkinsApi {
 
 		String getUrl = jenkinsUrl + "/job/" + jobName + "/" + buildNumber + API;
 		JSONObject responseJson;
-		try {
-			responseJson = runHttp(client, context, getUrl);
-		} catch (Exception e) {
+		responseJson = runHttp(client, context, getUrl);
+		if (responseJson == null) {
 			return false;
 		}
 
@@ -259,9 +258,8 @@ public class JenkinsApi {
 
 		String getUrl = jenkinsUrl + "/job/" + jobName + "/" + buildNumber + API;
 		JSONObject responseJson;
-		try {
-			responseJson = runHttp(client, context, getUrl);
-		} catch (JSONException e) {
+		responseJson = runHttp(client, context, getUrl);
+		if (responseJson == null) {
 			return false;
 		}
 
@@ -277,8 +275,8 @@ public class JenkinsApi {
 	 * @throws InterruptedException
 	 * @throws TimeoutException
 	 */
-	public void waitForBuildToStart(String jobName, int buildNumber) throws JSONException, InterruptedException,
-			TimeoutException {
+	public void waitForBuildToStart(String jobName, int buildNumber) throws InterruptedException, TimeoutException,
+			JSONException {
 
 		long start = System.currentTimeMillis();
 		long timeout = 5 * 60 * 1000;
@@ -316,33 +314,65 @@ public class JenkinsApi {
 
 	}
 
-	private JSONObject runHttp(DefaultHttpClient client, BasicHttpContext context, String getUrl) throws JSONException {
+	private JSONObject runHttp(DefaultHttpClient client, BasicHttpContext context, String getUrl) {
 		HttpGet get = new HttpGet(getUrl);
 
+		HttpResponse response;
+		String jsonStr = null;
 		try {
-			HttpResponse response = client.execute(get, context);
+			response = client.execute(get, context);
 			HttpEntity entity = response.getEntity();
-			String jsonStr = EntityUtils.toString(entity);
+			jsonStr = EntityUtils.toString(entity);
 			System.out.println(jsonStr);
 			System.out.println(response.getStatusLine());
-
-			try {
-				JSONObject jo = new JSONObject(jsonStr);
-				String[] names = JSONObject.getNames(jo);
-
-				for (String string : names) {
-					System.out.print(string + " = ");
-					System.out.println(jo.get(string));
-				}
-				return jo;
-			} catch (com.amazonaws.util.json.JSONException je) {
-				System.out.println("no json");
-				return null;
-			}
+		} catch (ClientProtocolException e) {
+			return null;
 		} catch (IOException e) {
-			e.printStackTrace();
 			return null;
 		}
+
+		return getJsonFromString(jsonStr);
+	}
+
+	private JSONObject getJsonFromString(String jsonStr) {
+
+		JSONObject jo = null;
+		boolean successJson = false;
+
+		while (!successJson) {
+			try {
+				jo = new JSONObject(jsonStr);
+				successJson = true;
+			} catch (JSONException je) {
+				String exceptionTypeToFix = "Duplicate key ";
+				String duplicated;
+				if (je.getMessage().contains(exceptionTypeToFix)) {
+					System.out.println("WARNING : Duplicate in json ");
+					duplicated = je.getMessage().replaceAll("\"", "").replace("Duplicate key ", "");
+					System.out.println("WARNING : Transversing Duplicated json TAG : " + duplicated);
+					while (jsonStr.contains(duplicated)) {
+						jsonStr = jsonStr.replaceFirst(duplicated,
+								duplicated.toUpperCase() + System.currentTimeMillis());
+					}
+				} else {
+					System.out.println("no json");
+					return null;
+				}
+				continue;
+			}
+		}
+
+		String[] names = JSONObject.getNames(jo);
+
+		for (String string : names) {
+			System.out.print(string + " = ");
+			try {
+				System.out.println(jo.get(string));
+			} catch (JSONException e) {
+				e.printStackTrace();
+			}
+		}
+		return jo;
 	}
 
 	/**
